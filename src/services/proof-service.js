@@ -11,23 +11,27 @@ class ProofSerivce extends BaseService {
 
   //TODO: replace start and ends with typedstarts and typedends
 
-  // deposits form: [{range, block, depositer}]
-  // history form: history[TRIndex(of Transaction being checked)][deposit][block][i] = {ith relevant tx, ITS transferIndex, [its tree indexes], [its [branches]]}
-  // ^ AKA history[TRIndex] = subHistory with subHistory[deposit][block][i] = as above
-  checkProof (transaction, history) {
-    if (!checkHistoryWellFormed(transaction, history)) return false
+  checkNewTransactionProof (transaction, history) {
+    const deposits = getMostRecentDeposits(range)
+    return checkHistoryProofFromSnapshot(transaction, history, deposits)
+  }
+
+  // history form: history[TRIndex(of Transaction being checked)][relevantSnapshotInd][block][i] = {ith relevant tx, ITS transferIndex, [its tree indexes], [its [branches]]}
+  // ^ AKA history[TRIndex] = subHistory with subHistory[relevantSnapshotInd][block][i] = as above
+  checkHistoryProofFromSnapshot (transaction, history, snapshots) {
+    if (!checkValidHistoryFromSnapshots(transaction, history, snapshots)) return false
     //TODO: make sure no trickery with sender or recipient = 0x0000000...
-    for (let i = 0; i < transaction.TransferRecords.elements.length; i++) { // for each send in the TX
-      const transfer = transaction.transfers[i]
+    for (let i = 0; i < transaction.transfers.length; i++) { // for each send in the TX
+      const transfer = transaction.transfers[i] // the particular TR
       let trHistory = history[i] // history for this particular TR
       const sender = transfer.sender
-      const range = {start: transfer.start, end: transfer.end}
-      const deposits = getMostRecentDeposits(range)
-      for (let i = 0; i < deposits.length; i++) {
-        const deposit = deposits[i]
-        const depositHistory = trHistory[i]
-        depositHistory.toBlock = transaction.block // the block the history goes "up to" -- the transaction's block!
-        owner = checkDepositSubrangeOwner(deposit, subRange, depositHistory)
+      const subRange = {start: transfer.start, end: transfer.end}
+      const relevantSnapshots = getOverlappingSnapshots(snapshots, transfer)
+      for (let i = 0; i < relevantSnapshots.length; i++) {
+        const snapshot = relevantSnapshots[i]
+        const snapshotHistory = trHistory[i]
+        snapshotHistory.toBlock = transaction.block // the block the history goes "up to" -- the transaction's block!
+        owner = checkSnapshotSubrangeOwner(snapshot, subRange, snapshotHistory)
         if (owner !== sender) return false
       }
     }
@@ -37,30 +41,33 @@ class ProofSerivce extends BaseService {
   //TODO check root sum is ffffff...
   //TODO: check transaction inclusion in the block or decide to handle that before inputting here
   //TODO break into more functions lololol
-  checkHistoryWellFormed (transaction, history) {
-    if (!history || !transaction) return false // something's missing
+  checkValidHistoryFromSnapshots (transaction, history, snapshots) {
+    if (!history || !transaction || !snapshots) return false // something's missing
     if (transaction.transfers.length !== history.length) return false // as many entries as TRs being covered from history
     for (let i = 0; i < transaction.transfers.length; i++) { // for each transfer in the TX we're ultimately verifying...
       const trHistory = history[i]
-      const transfer = transaction.transfers[i]
-      const deposits = getMostRecentDeposits(transfer.start, transfer.end)
-      if (deposits.length !== trHistory.length) return false 
-      for (let j = 0; j < deposits.length; j++) { // for each deposit covering that transfer...
-        const deposit = deposits[i]
-        const depositHistory = trHistory[j]
-        for (let block = deposit.block; k < transaction.block; k++) {
-          const blockProofs = depositHistory[block]
+      const relevantSnapshots = getOverlappingSnapshots(snapshots, transaction.transfers[i])
+      if (relevantSnapshots.length !== trHistory.length) return false 
+      for (let j = 0; j < relevantSnapshots.length; j++) { // for each snapshot intersecting that transfer...
+        const snapshot = relevantSnapshots[j]
+        const snapshotHistory = trHistory[j]
+        for (let block = snapshot.block; k < transaction.block; k++) { // for each block in the snapshot history
+          const blockProofs = snapshotHistory[block] // the proofs for that snapshot, in this block
           let expectedLeafIndex = blockProofs[0].leafIndices[blockProofs[0].TRIndex]
           for (let k = 0; k < blockProofs.length; k++) {
-            const proof = blockProofs[k]
-            if (proof.leafIndices[proof.TRIndex] !== expectedLeafIndex) return false // not sequential!
-            else expectedLeafIndex++
+            const proof = blockProofs[k] // the proofs for each transaction in the b
+            if (proof.leafIndices[proof.TRIndex] !== expectedLeafIndex) return false // not sequential leaves of block tree!
+            expectedLeafIndex++
             if (!checkTransactionIncludedAndWellFormed(proof, block)) return false
           }
         }
       }
     }
     return true
+  }
+
+  getOverlappingSnapshots(snapshots, transfer) {
+    // todo implement
   }
 
 
@@ -92,17 +99,20 @@ class ProofSerivce extends BaseService {
     return true
   }
 
-  checkDepositSubrangeOwner (deposit, subRange, depositHistory) {
+
+  checkSnapshotSubrangeOwner (snapshot, subRange, snapshotHistory) {
     let intersection = {}
-    intersection.start = (deposit.start.lt(subRange.start)) ? subRange.start : deposit.start // these two lines find the intersection between the deposit and the inquired range
-    intersection.end = (deposit.end.gt(subRange.end)) ? subRange.end : deposit.end
+    //todo breakout these two lines into a function and reuse in applyTransferToRangeState
+    intersection.start = (snapshot.start.lt(subRange.start)) ? subRange.start : snapshot.start // these two lines find the intersection between the deposit and the inquired range
+    intersection.end = (snapshot.end.gt(subRange.end)) ? subRange.end : snapshot.end
+    //change rangestate to snapshot?  might be confusing
     let rangeState = {range: intersection, owner: deposit.depositer} // initialize rangeState to all owned by depositer
-    for (let block = deposit.block; i < depositHistory.toBlock; i++) {
-      const blockHistory = depositHistory[block] // this is the most internal history element--represents the relevant proofs, for the transactions affecting the deposit range, at this block
+    for (let block = snapshot.block; i < snapshotHistory.toBlock; i++) {
+      const blockHistory = snapshotHistory[block] // this is the most internal history element--represents the relevant proofs, for the transactions affecting the deposit range, at this block
       const implicitRange = getImplicitRange(blockHistory) // full coverage of the blockHistory including implicit noTX's
-      if (implicitRange.start.gt(intersection.start) || implicitRange.end.lt(intersection.end)) return false // because then the proof doesn't cover ranges even with implicit noTXs!!! --> in(complete/valid) proof
-      for (let transactionProofs in blockHistory) {
-        const transfer = transactionProofs.transaction.transfers[transactionProofs.transferIndex]
+      if (implicitRange.start.gt(intersection.start) || implicitRange.end.lt(intersection.end)) return false // because then the proof doesn't cover ranges even with the implicit noTXs!!! --> in(complete/valid) proof
+      for (let proofs in blockHistory) {
+        const transfer = proofs.transaction.transfers[proofs.transferIndex]
         rangeState = applyTransferToRangeState(transfer, rangeState)
       }
     }
@@ -177,173 +187,143 @@ class ProofSerivce extends BaseService {
     return [{range, depositer, block}]
   }
 
-  ///// OLD SHIT BELOW HERE
+//   /**
+//    * Checks whether a transaction is valid or not.
+//    * @param {*} transaction Transaction to be validated.
+//    * @param {*} range Range being transacted.
+//    * @param {*} deposits A list of original deposits for that range.
+//    * @param {*} history A history of transactions and proofs for that range.
+//    * @return {boolean} `true` if the transaction is valid, `false` otherwise.
+//    */
+//   checkProof (transaction, range, deposits, history) {
+//     // TODO: Also check that start and end are within bounds.
+//     if (range.end <= range.start) {
+//       throw new Error('Invalid range')
+//     }
+//     // TODO: Check that the history chunks are correctly formed.
 
+//     // Check that the deposits are valid for the given range.
+//     // TODO: Throw if false.
+//     this._checkDepositsValid(deposits, range)
 
-  const checkBranchValidity = function(leafIndex, transaction, proof, root) {
-    //todo check indexbitstring.length <= proof length, proof not empty, proof divides 2
-    const index = new BN(leafIndex).toString(2, proof.length / 2) // path bitstring
-    const path = index.split("").reverse().join("") // reverse ordering so we start with the bottom
-    let encoding = transaction.encode()
-    encoding = '0x' + new BN(encoding).toString(16, 2 * encoding.length)
-    const leafParent = (path[0] == '0') ? proof[0] : proof[1]
-    if ('0x' + leafParent.data.slice(0, 2 * 32) !== ST.hash(encoding)) return false // wasn't the right TX!
-    for (let i = 1; i < path.length; i++) {
-        const bit = path[i]
-        const potentialParent = (bit === '0') ? proof[2 * i] : proof[2 * i + 1]
-        const actualParent = ST.parent(proof[2 * (i - 1)], proof[2 * (i - 1) + 1])
-        if (!areNodesEquivalent(actualParent, potentialParent)) return false
-    }
-    const potentialRoot = (proof.length > 1) ? ST.parent(proof[proof.length-2], proof[proof.length-1]) : proof[proof.length]
-	//TODO check if sum is ffffffff
-    if (areNodesEquivalent(potentialRoot, root)) return true
-    return false // something didn't work!
-}
+//     // Determine where to start checking the history.
+//     const earliestDeposit = deposits.reduce((prev, curr) => {
+//       return prev.block < curr.block ? prev : curr
+//     })
 
+//     // Check that the ranges are all covered.
+//     // TODO: Throw if false.
+//     const requiredRanges = this._getRequiredRanges(deposits)
+//     for (let i = earliestDeposit.block; i < transaction.block; i++) {
+//       let chunks = history[i]
+//       let requiredRange = this._nextLowerValue(requiredRanges, i)
+//       this._checkChunksCoverRange(requiredRange, chunks)
+//     }
 
+//     // Check that the chunks are all valid.
+//     // We do this in a separate loop because it's computationally intensive.
+//     // TODO: Throw if false.
+//     for (let block in history) {
+//       let chunks = history[block]
+//       for (let chunk of chunks) {
+//         this._checkChunkValid(block, chunk)
+//       }
+//     }
+//   }
 
+//   /**
+//    * Checks whether a list of deposits are valid for a range.
+//    * @param {*} deposits Deposits to be checked.
+//    * @param {*} range Range created by those deposits.
+//    * @return {boolean} `true` if the deposits are valid, `false` otherwise.
+//    */
+//   _checkDepositsValid (deposits, range) {
+//     // TODO: Implement this.
+//     return true
+//   }
 
+//   /**
+//    * Checks whether a list of chunks are touching.
+//    * Two chunks are touching if the end of the first is
+//    * immediately followed by the start of the second.
+//    * @param {*} chunks A list of chunks
+//    * @return {boolean} `true` if the chunks are touching, `false` otherwise.
+//    */
+//   _checkChunksTouch (chunks) {
+//     return chunks.every((chunk, i) => {
+//       return i === 0 || chunk.tx.start === chunks[i - 1].tx.end + 1
+//     })
+//   }
 
+//   /**
+//    * Checks if a set of chunks cover an entire range.
+//    * @param {*} range Range to be covered.
+//    * @param {*} chunks Chunks to be checked.
+//    * @return {boolean} `true` if the chunks cover the range, `false` otherwise.
+//    */
+//   _checkChunksCoverRange (range, chunks) {
+//     const sortedChunks = chunks.sort((a, b) => {
+//       return a.tx.start - b.tx.start
+//     })
 
+//     const firstChunk = sortedChunks[0]
+//     const lastChunk = sortedChunks[sortedChunks.length - 1]
+//     return range.start >= firstChunk.tx.start && range.end <= lastChunk.tx.end && this._checkChunksTouch(sortedChunks)
+//   }
 
+//   /**
+//    * Checks if a chunk is included in the specified block.
+//    * @param {*} block Block in which the chunk is included.
+//    * @param {*} chunk Chunk to be validated.
+//    * @return {boolean} `true` if the chunk is valid, `false` otherwise.
+//    */
+//   _checkChunkValid (block, chunk) {
+//     // TODO: Implement this.
+//     return true
+//   }
 
-  /**
-   * Checks whether a transaction is valid or not.
-   * @param {*} transaction Transaction to be validated.
-   * @param {*} range Range being transacted.
-   * @param {*} deposits A list of original deposits for that range.
-   * @param {*} history A history of transactions and proofs for that range.
-   * @return {boolean} `true` if the transaction is valid, `false` otherwise.
-   */
-  checkProof (transaction, range, deposits, history) {
-    // TODO: Also check that start and end are within bounds.
-    if (range.end <= range.start) {
-      throw new Error('Invalid range')
-    }
-    // TODO: Check that the history chunks are correctly formed.
+//   /**
+//    * Returns the value of the next lower key on an object.
+//    * @param {*} obj Object to query.
+//    * @param {number} x An integer key.
+//    * @return {*} Value of the next key smaller than or equal to `x`.
+//    */
+//   _nextLowerValue (obj, x) {
+//     x = parseInt(x)
 
-    // Check that the deposits are valid for the given range.
-    // TODO: Throw if false.
-    this._checkDepositsValid(deposits, range)
+//     let lowest = -1
+//     for (let key in obj) {
+//       key = parseInt(key)
+//       if (key > lowest && key <= x) {
+//         lowest = key
+//       }
+//     }
 
-    // Determine where to start checking the history.
-    const earliestDeposit = deposits.reduce((prev, curr) => {
-      return prev.block < curr.block ? prev : curr
-    })
+//     return obj[lowest]
+//   }
 
-    // Check that the ranges are all covered.
-    // TODO: Throw if false.
-    const requiredRanges = this._getRequiredRanges(deposits)
-    for (let i = earliestDeposit.block; i < transaction.block; i++) {
-      let chunks = history[i]
-      let requiredRange = this._nextLowerValue(requiredRanges, i)
-      this._checkChunksCoverRange(requiredRange, chunks)
-    }
+//   /**
+//    * Returns an object that describes when parts of a range
+//    * were created based on the original deposits.
+//    * @param {*} deposits A list of deposits
+//    * @return {Object} An object that maps from block numbers to ranges.
+//    */
+//   _getRequiredRanges (deposits) {
+//     const sortedDeposits = deposits.sort((a, b) => {
+//       return a.start - b.start
+//     })
+//     const firstDeposit = sortedDeposits[0]
 
-    // Check that the chunks are all valid.
-    // We do this in a separate loop because it's computationally intensive.
-    // TODO: Throw if false.
-    for (let block in history) {
-      let chunks = history[block]
-      for (let chunk of chunks) {
-        this._checkChunkValid(block, chunk)
-      }
-    }
-  }
+//     let requiredRanges = {}
+//     for (let deposit of deposits) {
+//       requiredRanges[deposit.block] = {
+//         start: firstDeposit.start,
+//         end: deposit.end
+//       }
+//     }
 
-  /**
-   * Checks whether a list of deposits are valid for a range.
-   * @param {*} deposits Deposits to be checked.
-   * @param {*} range Range created by those deposits.
-   * @return {boolean} `true` if the deposits are valid, `false` otherwise.
-   */
-  _checkDepositsValid (deposits, range) {
-    // TODO: Implement this.
-    return true
-  }
-
-  /**
-   * Checks whether a list of chunks are touching.
-   * Two chunks are touching if the end of the first is
-   * immediately followed by the start of the second.
-   * @param {*} chunks A list of chunks
-   * @return {boolean} `true` if the chunks are touching, `false` otherwise.
-   */
-  _checkChunksTouch (chunks) {
-    return chunks.every((chunk, i) => {
-      return i === 0 || chunk.tx.start === chunks[i - 1].tx.end + 1
-    })
-  }
-
-  /**
-   * Checks if a set of chunks cover an entire range.
-   * @param {*} range Range to be covered.
-   * @param {*} chunks Chunks to be checked.
-   * @return {boolean} `true` if the chunks cover the range, `false` otherwise.
-   */
-  _checkChunksCoverRange (range, chunks) {
-    const sortedChunks = chunks.sort((a, b) => {
-      return a.tx.start - b.tx.start
-    })
-
-    const firstChunk = sortedChunks[0]
-    const lastChunk = sortedChunks[sortedChunks.length - 1]
-    return range.start >= firstChunk.tx.start && range.end <= lastChunk.tx.end && this._checkChunksTouch(sortedChunks)
-  }
-
-  /**
-   * Checks if a chunk is included in the specified block.
-   * @param {*} block Block in which the chunk is included.
-   * @param {*} chunk Chunk to be validated.
-   * @return {boolean} `true` if the chunk is valid, `false` otherwise.
-   */
-  _checkChunkValid (block, chunk) {
-    // TODO: Implement this.
-    return true
-  }
-
-  /**
-   * Returns the value of the next lower key on an object.
-   * @param {*} obj Object to query.
-   * @param {number} x An integer key.
-   * @return {*} Value of the next key smaller than or equal to `x`.
-   */
-  _nextLowerValue (obj, x) {
-    x = parseInt(x)
-
-    let lowest = -1
-    for (let key in obj) {
-      key = parseInt(key)
-      if (key > lowest && key <= x) {
-        lowest = key
-      }
-    }
-
-    return obj[lowest]
-  }
-
-  /**
-   * Returns an object that describes when parts of a range
-   * were created based on the original deposits.
-   * @param {*} deposits A list of deposits
-   * @return {Object} An object that maps from block numbers to ranges.
-   */
-  _getRequiredRanges (deposits) {
-    const sortedDeposits = deposits.sort((a, b) => {
-      return a.start - b.start
-    })
-    const firstDeposit = sortedDeposits[0]
-
-    let requiredRanges = {}
-    for (let deposit of deposits) {
-      requiredRanges[deposit.block] = {
-        start: firstDeposit.start,
-        end: deposit.end
-      }
-    }
-
-    return requiredRanges
-  }
-}
+//     return requiredRanges
+//   }
+// }
 
 module.exports = ProofSerivce
