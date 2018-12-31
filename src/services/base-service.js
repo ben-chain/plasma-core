@@ -15,7 +15,7 @@ class BaseService extends EventEmitter {
 
   /**
    * Returns the name of this service.
-   * @returns {string} Name of the service.
+   * @return {string} Name of the service.
    */
   get name () {
     throw new Error('Classes that extend BaseService must implement this method')

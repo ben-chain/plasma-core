@@ -213,7 +213,7 @@ class ProofSerivce extends BaseService {
    * @param {*} range Range being transacted.
    * @param {*} deposits A list of original deposits for that range.
    * @param {*} history A history of transactions and proofs for that range.
-   * @returns {boolean} `true` if the transaction is valid, `false` otherwise.
+   * @return {boolean} `true` if the transaction is valid, `false` otherwise.
    */
   checkProof (transaction, range, deposits, history) {
     // TODO: Also check that start and end are within bounds.
@@ -232,7 +232,7 @@ class ProofSerivce extends BaseService {
     })
 
     // Check that the ranges are all covered.
-    // TODO: Throw if false
+    // TODO: Throw if false.
     const requiredRanges = this._getRequiredRanges(deposits)
     for (let i = earliestDeposit.block; i < transaction.block; i++) {
       let chunks = history[i]
@@ -242,7 +242,7 @@ class ProofSerivce extends BaseService {
 
     // Check that the chunks are all valid.
     // We do this in a separate loop because it's computationally intensive.
-    // TODO: Throw if false
+    // TODO: Throw if false.
     for (let block in history) {
       let chunks = history[block]
       for (let chunk of chunks) {
@@ -255,7 +255,7 @@ class ProofSerivce extends BaseService {
    * Checks whether a list of deposits are valid for a range.
    * @param {*} deposits Deposits to be checked.
    * @param {*} range Range created by those deposits.
-   * @returns {boolean} `true` if the deposits are valid, `false` otherwise.
+   * @return {boolean} `true` if the deposits are valid, `false` otherwise.
    */
   _checkDepositsValid (deposits, range) {
     // TODO: Implement this.
@@ -267,7 +267,7 @@ class ProofSerivce extends BaseService {
    * Two chunks are touching if the end of the first is
    * immediately followed by the start of the second.
    * @param {*} chunks A list of chunks
-   * @returns {boolean} `true` if the chunks are touching, `false` otherwise.
+   * @return {boolean} `true` if the chunks are touching, `false` otherwise.
    */
   _checkChunksTouch (chunks) {
     return chunks.every((chunk, i) => {
@@ -279,7 +279,7 @@ class ProofSerivce extends BaseService {
    * Checks if a set of chunks cover an entire range.
    * @param {*} range Range to be covered.
    * @param {*} chunks Chunks to be checked.
-   * @returns {boolean} `true` if the chunks cover the range, `false` otherwise.
+   * @return {boolean} `true` if the chunks cover the range, `false` otherwise.
    */
   _checkChunksCoverRange (range, chunks) {
     const sortedChunks = chunks.sort((a, b) => {
@@ -295,7 +295,7 @@ class ProofSerivce extends BaseService {
    * Checks if a chunk is included in the specified block.
    * @param {*} block Block in which the chunk is included.
    * @param {*} chunk Chunk to be validated.
-   * @returns {boolean} `true` if the chunk is valid, `false` otherwise.
+   * @return {boolean} `true` if the chunk is valid, `false` otherwise.
    */
   _checkChunkValid (block, chunk) {
     // TODO: Implement this.
@@ -306,7 +306,7 @@ class ProofSerivce extends BaseService {
    * Returns the value of the next lower key on an object.
    * @param {*} obj Object to query.
    * @param {number} x An integer key.
-   * @returns {*} Value of the next key smaller than or equal to `x`.
+   * @return {*} Value of the next key smaller than or equal to `x`.
    */
   _nextLowerValue (obj, x) {
     x = parseInt(x)
@@ -326,7 +326,7 @@ class ProofSerivce extends BaseService {
    * Returns an object that describes when parts of a range
    * were created based on the original deposits.
    * @param {*} deposits A list of deposits
-   * @returns {Object} An object that maps from block numbers to ranges.
+   * @return {Object} An object that maps from block numbers to ranges.
    */
   _getRequiredRanges (deposits) {
     const sortedDeposits = deposits.sort((a, b) => {

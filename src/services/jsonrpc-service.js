@@ -5,7 +5,7 @@ const BaseService = require('./base-service')
  * @param {*} instance Class instance to be queried.
  * @param {*} ignore Names of functions to ignore.
  * @param {*} prefix A prefix to be added to each function.
- * @returns {Object} An object that maps function names to functions.
+ * @return {Object} An object that maps function names to functions.
  */
 const getAllFunctions = (instance, ignore = [], prefix = '') => {
   let fns = {}
@@ -46,8 +46,8 @@ const JSONRPC_ERRORS = {
 class JSONRPCService extends BaseService {
   constructor (options) {
     super()
-
-    this.subdispatchers = [new ChainSubdispatcher()]
+    this.app = options.app
+    this.subdispatchers = [new ChainSubdispatcher({ app: this.app })]
   }
 
   get name () {
@@ -56,7 +56,7 @@ class JSONRPCService extends BaseService {
 
   /**
    * Returns all methods of all subdispatchers.
-   * @returns {Object} All subdispatcher methods as a single object.
+   * @return {Object} All subdispatcher methods as a single object.
    */
   getAllMethods () {
     return this.subdispatchers.map((subdispatcher) => {
@@ -69,7 +69,7 @@ class JSONRPCService extends BaseService {
   /**
    * Returns a single method.
    * @param {*} name Name of the method to return.
-   * @returns {function} The method with the given name or
+   * @return {function} The method with the given name or
    * `undefined` if the method does not exist.
    */
   getMethod (name) {
@@ -83,7 +83,7 @@ class JSONRPCService extends BaseService {
    * Calls the method with the given name and parameters.
    * @param {*} name Name of the method to call.
    * @param {*} params Parameters to be used as arguments to the method.
-   * @returns {*} Result of the function call.
+   * @return {*} Result of the function call.
    */
   async callMethod (name, params) {
     const method = this.getMethod(name)
@@ -93,7 +93,7 @@ class JSONRPCService extends BaseService {
   /**
    * Handles a raw (JSON) JSON-RPC request.
    * @param {*} jsonRequest A stringified JSON-RPC request.
-   * @returns {*} Result of the JSON-RPC call.
+   * @return {*} Result of the JSON-RPC call.
    */
   async handle (jsonRequest) {
     let request
@@ -113,7 +113,7 @@ class JSONRPCService extends BaseService {
 
     let result
     try {
-      result = this.callMethod(request.method, request.params)
+      result = await this.callMethod(request.method, request.params)
     } catch (err) {
       return this._buildError('INTERNAL_ERROR', request.id)
     }
@@ -129,7 +129,7 @@ class JSONRPCService extends BaseService {
    * Builds a JSON-RPC error response.
    * @param {*} type Error type.
    * @param {*} id RPC command ID.
-   * @returns {Object} A stringified JSON-RPC error response.
+   * @return {Object} A stringified JSON-RPC error response.
    */
   _buildError (type, id) {
     return JSON.stringify({
@@ -144,6 +144,10 @@ class JSONRPCService extends BaseService {
  * Base class for JSON-RPC subdispatchers that handle requests.
  */
 class Subdispatcher {
+  constructor (options) {
+    this.options = options
+  }
+
   /**
    * Returns the JSON-RPC prefix of this subdispatcher.
    */
@@ -164,16 +168,21 @@ class Subdispatcher {
  * Subdispatcher that handles chain-related requests.
  */
 class ChainSubdispatcher extends Subdispatcher {
+  constructor (options) {
+    super()
+    this.app = options.app
+  }
+
   get prefix () {
     return 'pg_'
   }
 
-  getBalance (address) {
-    throw new Error('Not implemented')
+  async getBalances (address) {
+    await this.app.chainService.getBalances(address)
   }
 
-  getBlock (block) {
-    throw new Error('Not implemented')
+  async getBlock (block) {
+    await this.app.chainService.getBlock(block)
   }
 }
 

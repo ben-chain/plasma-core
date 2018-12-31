@@ -1,7 +1,10 @@
+const utils = require('plasma-utils')
+
 const DBService = require('./services/db-service')
 const JSONRPCService = require('./services/jsonrpc-service')
 const RPCServerService = require('./services/rpc-server-service')
-const utils = require('plasma-utils')
+const ChainService = require('./services/chain-service')
+const OperatorService = require('./services/operator/operator-service')
 
 /**
  * Main class that runs and manages all services.
@@ -29,6 +32,12 @@ class PlasmaApp {
       port: this.options.rpcPort
     })
     this.services.jsonrpc = new JSONRPCService({
+      app: this
+    })
+    this.services.chain = new ChainService({
+      app: this
+    })
+    this.services.operator = new OperatorService({
       app: this
     })
   }
