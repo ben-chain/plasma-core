@@ -1,6 +1,8 @@
 const BaseService = require('./base-service')
 const BN = require('web3').utils.BN
 const _ = require('lodash')
+const PlasmaMerkleSumTree = new require('./sum-tree')
+const ST = new PlasmaMerkleSumTree()
 
 class ProofSerivce extends BaseService {
   get name () {
@@ -32,7 +34,6 @@ class ProofSerivce extends BaseService {
     return true
   }
 
-  //TODO: check all tx proofs upfront, including confirmAdjacentTransactions() for each blockHistory
   //TODO check root sum is ffffff...
   //TODO: check transaction inclusion in the block or decide to handle that before inputting here
   //TODO break into more functions lololol
@@ -49,22 +50,46 @@ class ProofSerivce extends BaseService {
         const depositHistory = trHistory[j]
         for (let block = deposit.block; k < transaction.block; k++) {
           const blockProofs = depositHistory[block]
-          prevleafIndex = blockProofs[0].leafIndices[blockProofs[0].TRIndex] - 1
+          let expectedLeafIndex = blockProofs[0].leafIndices[blockProofs[0].TRIndex]
           for (let k = 0; k < blockProofs.length; k++) {
             const proof = blockProofs[k]
-            if 
-
+            if (proof.leafIndices[proof.TRIndex] !== expectedLeafIndex) return false // not sequential!
+            else expectedLeafIndex++
+            if (!checkTransactionIncludedAndWellFormed(proof, block)) return false
           }
-          // confirm depositHist[k] exitsts
-          // confirm tx's are adjacent
-          // confirm tx's are valid & well-formed including multisends
         }
-
       }
     }
-    for (let subHistory in history) { // this is grabbing us the subhistory for each TR
+    return true
+  }
 
+
+  // this does the check the smart contract will do to confirm transaction validity.
+  // takes in proof = {transaction, TRIndex, [leafIndices], [branches]}
+  checkTransactionIncludedAndWellFormed(proof, block) {    // proof = {ith relevant tx, ITS transferIndex, [its tree indexes], [its [branches]]}
+  const firstBranchLength = proof.branches[0].length
+  for (let branch in proof.branches) if (branch.length !== firstBranchLength) return false //proofs must be equal length
+  const root = getBlockRoot(block) // TODO hardcode or integrate into ETHservice
+  for (let i = 0; i < proof.leafIndices.length; i++) { // todo make sure we don't iterate over proof.branches.length elsewhere, this could result in a vuln?
+      const branch = proof.branches[i]
+      //todo checks on indexbitstring.length <= proof length, proof not empty, proof divides 2
+      const index = new BN(proof.leafIndices[i]).toString(2, firstBranchLength / 2) // path bitstring
+      const path = index.split("").reverse().join("") // reverse ordering so we start with the bottom
+      let encoding = proof.transaction.encode()
+      encoding = '0x' + new BN(encoding).toString(16, 2 * encoding.length)
+      const leafParent = (path[0] == '0') ? branch[0] : branch[1]
+      if ('0x' + leafParent.data.slice(0, 2 * 32) !== ST.hash(encoding)) return false // wasn't the right TX!
+      for (let j = 1; k < path.length; j++) {
+          const bit = path[j]
+          const potentialParent = (bit === '0') ? branch[2 * j] : branch[2 * j + 1]
+          const actualParent = ST.parent(branch[2 * (j - 1)], branch[2 * (j - 1) + 1])
+          if (!areNodesEquivalent(actualParent, potentialParent)) return false
+      }
+      const potentialRoot = (branch.length > 1) ? ST.parent(branch[branch.length-2], branch[branch.length-1]) : branch[branch.length]
+    //TODO check if sum is ffffffff
+      if (!areNodesEquivalent(potentialRoot, root)) return false
     }
+    return true
   }
 
   checkDepositSubrangeOwner (deposit, subRange, depositHistory) {
@@ -115,7 +140,9 @@ class ProofSerivce extends BaseService {
     return rangeState
   }
 
+  //TODO breakout into more reusable function, this is horiblé
   getImplicitRange (transactionProofs) {
+    //todo make sure we weren't given something empty(?)
     let leftSum = rightSum = new BN(0)
     const firstProofs = transactionProofs[0]
     const firstBranch = firstProofs.branches[0]
@@ -144,6 +171,15 @@ class ProofSerivce extends BaseService {
     }
   }
 
+  //TODO: hardcode deposits for testing
+  //TODO later: replace hardcoding with ETH service & logic around it
+  getMostRecentDeposits(start, end) {
+    return [{range, depositer, block}]
+  }
+
+  ///// OLD SHIT BELOW HERE
+
+
   const checkBranchValidity = function(leafIndex, transaction, proof, root) {
     //todo check indexbitstring.length <= proof length, proof not empty, proof divides 2
     const index = new BN(leafIndex).toString(2, proof.length / 2) // path bitstring
@@ -165,23 +201,6 @@ class ProofSerivce extends BaseService {
 }
 
 
-
-  // TODO: actually use this in the initial checking of well-formed proofs
-  confirmAjacentTransactions (blockSubHistory) {
-    let ind = 0
-    for (transactionProof in blockSubHistory) {
-      if (transactionProof.index > ind) { // note: we will never have an equality here since we've verified the merkle sums above; so they prevent it! :)
-        ind = transactionProof.index
-      } else return false
-      return true
-    }
-  }
-  
-  //TODO: hardcode deposits for testing
-  //TODO later: replace hardcoding with ETH service & logic around it
-  getMostRecentDeposits(start, end) {
-    return [{range, depositer, block}]
-  }
 
 
 
